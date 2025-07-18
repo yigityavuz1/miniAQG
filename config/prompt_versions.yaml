@@ -1,0 +1,79 @@
+# Task Master AQG - Prompt Configuration
+# Updated for testing phase - using gpt-4o for all agents
+
+# LLM Provider Configuration
+llm_providers:
+  openai:
+    models:
+      # For testing: all agents use gpt-4o
+      content_splitter: "gpt-4o"
+      summarizer: "gpt-4o" 
+      question_generator: "gpt-4o"
+      judge: "gpt-4o"
+      fixer: "gpt-4o"
+    temperature: 0.7
+    max_tokens: 4000
+    timeout: 60
+
+  google:
+    models:
+      # Production planned models (not used during testing)
+      content_splitter: "gemini-2.0-flash-001" 
+      summarizer: "gemini-2.0-flash-001"
+      question_generator: "gemini-pro"
+      judge: "gemini-pro"
+      fixer: "gemini-pro"
+    temperature: 0.3
+    max_tokens: 4000
+    timeout: 60
+
+# Workflow Configuration
+workflow:
+  # Agents and their assigned models for testing
+  content_splitter:
+    version: "v1"
+    model: "gpt-4o"    # For testing, use gpt-4o for all agents
+  
+  summarizer:
+    version: "v1" 
+    model: "gpt-4o"
+    
+  question_generator:
+    version: "v1"
+    model: "gpt-4o"
+    
+  judge:
+    version: "v2"
+    model: "gpt-4o"
+    # Note: Using balanced judge v2 for testing to see mix of approved/rejected
+    
+  fixer:
+    version: "v1"
+    model: "gpt-4o"
+
+  # General workflow settings
+  llm_retry_attempts: 3
+  judge_max_iterations: 5
+  parallel_processing: true
+  check_and_skip: true
+
+# Cost Tracking
+cost_tracking:
+  target_cost_per_question: 0.05  # $0.05 target
+  alert_threshold: 0.10           # Alert if cost exceeds $0.10
+  track_by_agent: true
+  export_metrics: true
+
+# Logging Configuration  
+logging:
+  level: "INFO"
+  file_logging: true
+  terminal_logging: true
+  timestamp_format: "%Y-%m-%d %H:%M:%S"
+  metrics_export: true
+  
+# Storage Configuration
+storage:
+  intermediate_results: true
+  prompt_versioning: true
+  state_persistence: false  # In-memory only for LangGraph 

@@ -1,0 +1,260 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+# Project Overview: Automated Question Generation (AQG) System
+
+This project is a research-driven, modular implementation of an **Automated Question Generator (AQG)** system designed to simulate and improve upon workflows similar to those used in educational platforms like Udemy. The purpose is to explore how multi-agent orchestration and large language models (LLMs) can be leveraged to generate, evaluate, and iteratively improve quiz questions derived from long-form educational video content.
+
+### 🎯 Why Are We Building This?
+The core motivation is to:
+- Prototype a smaller-scale version of a commercial AQG system using open tools,
+- Analyze common failure modes (e.g., overly strict rejection from question judges),
+- Iterate on prompting, agent structure, and retry mechanisms,
+- Experiment with pipeline observability and runtime introspection.
+
+### 📦 Scope of the Project
+- The input is a YouTube playlist containing English-captioned educational videos (e.g., from 3Blue1Brown).
+- The output is a set of machine-generated questions tied to specific learning objectives and timestamped transcript segments.
+- The system uses LangGraph to orchestrate multi-step pipelines over LLM agents powered by GPT-4o and Gemini 2.5 Pro.
+- No persistent database is used; all data flows in memory, except logs and exportable snapshots.
+- A lightweight real-time monitoring UI is planned.
+
+This is not a product-ready system but a fully extensible, prompt- and agent-driven R&D sandbox designed to test complex question generation architectures in a controllable setting.
+
+### 🔁 High-Level Workflow Overview
+
+The AQG system is built as a multi-step pipeline, orchestrated through LangGraph. Each step is handled by a dedicated agent powered by either GPT-4o or Gemini 2.5 Pro. Here's a high-level view of the workflow:
+
+1. **Transcript Extraction (`transcribe.py`)**  
+   - Fetch `.vtt` subtitle files from a YouTube playlist using `yt-dlp`.  
+   - Convert them into structured JSON format with timestamps for each caption line.  
+   - Optionally export a markdown version for human inspection.
+
+2. **Content Segmentation (Splitter Agent – Gemini 2.5 Pro)**  
+   - Segment the transcript into structured topics and subtopics based on semantic boundaries and timestamps.  
+   - Each topic is bounded by start–end times.
+
+3. **Learning Objective Generation (LO Agent – Gemini 2.5 Pro)**  
+   - For each subtopic, generate a concise summary and 2–4 learning objectives.  
+   - Each LO is attached to its source topic and timestamp range.
+
+4. **Question Generation (Question Agent – GPT-4o)**  
+   - For each LO, generate 3–5 diverse questions (multiple choice, open-ended, etc.).  
+   - Each question includes type, difficulty level, correct answer, distractors, and explanation.
+
+5. **Quality Evaluation (Judge Agent – GPT-4o)**  
+   - Evaluate each question against its objective and source transcript.  
+   - If rejected, provide structured feedback and rejection reason(s).  
+   - Approved questions are labeled with attempt count and evaluation trace.
+
+6. **Iterative Fixing (Fixer Agent – GPT-4o)**  
+   - Receive rejected questions and improve them using rejection feedback and original generation context.  
+   - Retry up to 5 times or mark as unresolved if all attempts fail.
+
+7. **Monitoring & Logging**  
+   - Each LangGraph node emits a completion event to a WebSocket.  
+   - A lightweight dashboard shows real-time pipeline status, question stats, and rejection patterns.
+
+This pipeline operates over in-memory state and is fully modular—new agents can be inserted, prompt strategies swapped, and outputs redirected as needed.
+
+# Architecture Planning Questions & Answers for AQG System
+
+This document consolidates all architecture-related questions asked by the coding assistant (e.g., Cursor AI) and provides consistent, technically sound answers based on the current project scope. All answers are aligned with prior decisions regarding LangGraph, FastAPI, GPT-4o/Gemini agents, state handling, and overall R\&D goals.
+
+---
+
+## 1. Scale & Performance Requirements
+
+**Q1.1 – How many videos do you plan to process initially vs. long-term?**
+Not too many, this is a mini PoC of AQG. 8 videos right now, will be around 20 max. But it will stay at 8 until we have a working demo.
+
+**Q1.2 – Expected concurrent users/requests?**
+Only me testing right now. But I'd like to be able to process data in parallel. This will be handled after a working demo is ready.
+
+**Q1.3 – Are you processing videos in real-time or batch?**
+No real-time processing. Videos are pre-processed before question generation. The system should support adding new playlists for batch processing incrementally.
+
+**Q1.4 – What’s your acceptable latency for the full pipeline (transcript → questions)?**
+Not a major concern for now. The pipeline will include "checks" at each stage to avoid redundant processing. For example, `transcribe.py` skips downloading .vtt files if already available. This check mechanism will be built into all future pipeline stages.
+
+---
+
+## 2. Data Persistence Strategy
+
+**Q2.1 – Do you need to store intermediate results (topics, summaries, LOs)?**
+Yes, to enable the "check and skip" mechanism mentioned in Q1.4.
+
+**Q2.2 – How do you want to track question generation attempts and judge decisions?**
+Through detailed logging. Logs should be visible in the terminal and stored under a `logs/` directory with timestamped filenames for each session.
+
+**Q2.3 – Do you need versioning of prompts/questions for A/B testing?**
+Yes. Prompt versions will be stored in an organized and well-structured format on disk. Question versioning may also be done through deterministic prompt inputs.
+
+**Q2.4 – What’s your approach for storing the workflow state between agent calls?**
+We use LangGraph’s in-memory state propagation only. No persistent state or memory storage is used. This reduces complexity in R\&D. Logs and metric files *are* persisted to disk, but LangGraph state is not.
+
+---
+
+## 3. Error Handling & Reliability
+
+**Q3.1 – How do you want to handle LLM API failures/rate limits?**
+Wrap all LLM calls in `try/except` blocks. Catch `RateLimitError`, `Timeout`, etc. Use exponential backoff with jitter for retrying. LangGraph node-level retry config will be used where needed.
+
+**Q3.2 – What’s your retry strategy for the 5-iteration judge/fixer loop?**
+Fixer agents receive:
+
+* the rejected question,
+* rejection reasons from Judge,
+* and original generation context (learning objective, type, difficulty).
+
+The system tracks `fix_attempts`. After 5 tries, the question is marked `unresolved`. Every question is labeled with the number of attempts it took to pass.
+
+**Q3.3 – Do you need circuit breakers for external API calls?**
+Not now. The system is low-volume and internal. But API calls are centralized in a shared client, so circuit breakers can be added later if needed.
+
+**Q3.4 – How should partial failures be handled (e.g., LO generation fails)?**
+Each agent modifies only its section of the LangGraph state. On failure, other data is preserved. Failed runs can be resumed manually. Optionally, failed segments may be logged and re-queued for retries.
+
+---
+
+## 4. Observability & Monitoring
+
+**Q4.1 – Do you need detailed logging of agent decisions for debugging the "judge rejects too many questions" problem?**
+Yes. All judge decisions and reasoning steps will be stored in the `evaluation_log` field inside the LangGraph state and optionally exported to disk.
+
+**Q4.2 – What metrics matter most (rejection rates, processing time, cost per question)?**
+
+* Rejection Rate
+* Average Fix Iterations
+* Fix loop depth per question
+* Per-node latency
+* Token usage and cost per question
+
+Metrics will be collected in memory and optionally exported to disk.
+
+**Q4.3 – Do you need real-time monitoring of the pipeline?**
+Yes, but kept minimal. Each LangGraph node will emit a JSON event to a local WebSocket server. A lightweight dashboard (e.g., Streamlit) will visualize:
+
+* Node progression
+* Current rejection stats
+* Latency per step
+* Inputs/outputs of agents
+
+---
+
+## 5. Development & Testing Strategy
+
+**Q5.1 – How will you test the complex multi-agent workflows?**
+No overengineering. Manual tests using known inputs, log inspection, and replay via state snapshots. Priority is fast iteration over test coverage.
+
+**Q5.2 – Do you need a way to replay workflows with different prompts?**
+Yes. Prompt versioning is managed via config or CLI args. State files can be exported manually for rehydration and replay.
+
+**Q5.3 – What’s your approach for prompt versioning and experimentation?**
+All prompts are markdown files stored under `prompts/<agent>/vX.md`. Prompt version is selected at runtime via config and logged in LangGraph state for traceability.
+
+---
+
+## 6. Key Architectural Decisions
+
+**Q6.1 – Workflow Orchestration Pattern?**
+Sequential pipeline using LangGraph. Playlist-based batches are processed independently. No need for event-driven design.
+
+**Q6.2 – State Management Details?**
+State is fully in-memory (LangGraph). The fix loop is tracked with `fix_attempts`. No persistence or resume is required.
+
+**Q6.3 – Integration with `transcribe.py`?**
+We now use structured JSON (`transcripts/json/`) instead of markdown. Markdown is kept optionally for human inspection.
+Also, then "transcribe.py" won't be changed functionally, but could be converted into a more class-based structure to align with OOP principles and further usage across modules for the stage where we crewate the FastAPI endpoints.
+
+**Q6.4 – Prompt Management Strategy?**
+Prompt versioning is handled on disk (markdown). Loaded dynamically via config. No runtime DB needed.
+
+---
+
+## 7. Next Steps & Deployment
+
+**Q7.1 – Preferred storage/database solution?**
+No DB for now. All logs, transcripts, and metadata are saved as files. Later, Weaviate or SQLite can be added.
+
+**Q7.2 – Deployment preferences?**
+Local-first, then Docker for portability. No cloud needed in this phase.
+
+**Q7.3 – Budget/cost sensitivity for API usage?**
+Moderately cost-conscious. Per-question token costs will be monitored and optimized. Ideal target: <\$0.05/question.
+
+**Q7.4 – UI needs?**
+Yes. A lightweight dashboard (Streamlit or Dash) will be connected to WebSocket stream for real-time progress tracking.
+
+**Q7.5 – Real-time vs Batch for R\&D?**
+Batch is sufficient and preferred. Videos are processed in advance. No streaming use case.
+
+---
+
+This document is the canonical source of architectural intentions and constraints, and will be used to guide future implementation efforts with Cursor or other agents.
+
+
+Directory Structure:
+
+miniAQG/
+├── transcripts/
+│   ├── json/              # Canonical transcript data (from transcribe.py)
+│   └── md/                # Optional markdown exports
+├── prompts/
+│   ├── content_splitter/
+│   │   ├── v1.md
+│   │   └── v2.md
+│   ├── summarizer/
+│   │   ├── v1.md
+│   │   └── v2.md
+│   ├── question_generator/
+│   │   ├── v1.md
+│   │   └── v2.md
+│   ├── judge/
+│   │   ├── v1.md
+│   │   └── v2.md
+│   └── fixer/
+│       ├── v1.md
+│       └── v2.md
+├── logs/
+│   ├── session_20241201_143022.log
+│   └── metrics_20241201_143022.json
+├── outputs/
+│   ├── content_splits/    # Topics/subtopics per video
+│   ├── learning_objectives/ # LOs and summaries
+│   ├── questions/         # Generated questions
+│   └── metrics/          # Aggregated metrics
+├── src/
+│   ├── agents/
+│   │   ├── __init__.py
+│   │   ├── content_splitter.py
+│   │   ├── summarizer.py
+│   │   ├── question_generator.py
+│   │   ├── judge.py
+│   │   └── fixer.py
+│   ├── workflows/
+│   │   ├── __init__.py
+│   │   ├── aqg_workflow.py
+│   │   └── state_models.py
+│   ├── core/
+│   │   ├── __init__.py
+│   │   ├── llm_client.py
+│   │   ├── prompt_loader.py
+│   │   ├── logger.py
+│   │   └── metrics.py
+│   ├── api/
+│   │   ├── __init__.py
+│   │   ├── main.py
+│   │   ├── endpoints.py
+│   │   └── websocket.py
+│   └── dashboard/
+│       ├── __init__.py
+│       └── streamlit_app.py
+├── config/
+│   ├── .env
+│   └── prompt_versions.yaml
+├── transcribe.py          # Existing script
+├── requirements.txt       # Updated with new dependencies
+└── main.py               # Entry point

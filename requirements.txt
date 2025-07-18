@@ -1,0 +1,27 @@
+yt-dlp>=2023.1.6
+webvtt-py>=0.4.6
+python-dotenv>=1.0.0
+
+# Core LangGraph and AI
+langgraph>=0.0.40
+langchain>=0.1.0
+langchain-openai>=0.0.5
+langchain-google-genai>=1.0.0
+
+# API and Web
+fastapi>=0.104.0
+uvicorn>=0.24.0
+websockets>=12.0
+streamlit>=1.28.0
+
+# Data handling
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+pandas>=2.1.0
+numpy>=1.24.0
+
+# Utilities
+pyyaml>=6.0
+aiofiles>=23.2.0
+python-multipart>=0.0.6
+jinja2>=3.1.0 
