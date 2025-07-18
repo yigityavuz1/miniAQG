@@ -295,3 +295,6 @@ dev-plan.md
 test_api.py 
 test_judge_fix.py 
 test_question_type_fix.py
+
+./dev
+/dev
